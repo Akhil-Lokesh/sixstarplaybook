@@ -1,0 +1,135 @@
+<!doctype html>
+<!--
+  Bare test page for the API. Not the real frontend: no styling, no routing.
+  Serve it from another origin to exercise CORS:
+      python3 -m http.server 8080 --directory dev
+  then open http://localhost:8080/test-page.html with the backend on :8000.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API test page</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  input[type=text] { width: 100%; padding: 8px; font: inherit; box-sizing: border-box; }
+  pre { background: #f4f4f4; padding: 8px; overflow-x: auto; font-size: 12px; }
+  #answer { white-space: pre-wrap; min-height: 2em; border-left: 3px solid #999; padding-left: 10px; }
+  button { font: inherit; margin: 4px 4px 0 0; }
+</style>
+</head>
+<body>
+<h1>Six Star Playbook API test</h1>
+<p>API base <input id="base" type="text" value="http://127.0.0.1:8000"></p>
+<form id="form">
+  <input id="q" type="text" maxlength="300" placeholder="Ask a GTA 6 question" value="What time does GTA 6 unlock?">
+  <button>Ask</button>
+</form>
+<div id="starters"></div>
+<p id="status"></p>
+<div id="answer"></div>
+<p id="sources"></p>
+<button id="up" hidden>Helpful</button><button id="down" hidden>Not helpful</button>
+<h3>Raw events</h3>
+<pre id="log"></pre>
+
+<script>
+// A random id kept in localStorage; the API uses it with the IP for per-visitor limits.
+const clientId = (() => {
+  let id = null;
+  try { id = localStorage.getItem("ssp_client_id"); } catch {}
+  if (!id) {
+    id = crypto.randomUUID().replace(/-/g, "");
+    try { localStorage.setItem("ssp_client_id", id); } catch {}
+  }
+  return id;
+})();
+const $ = (id) => document.getElementById(id);
+const base = () => $("base").value.replace(/\/$/, "");
+let lastSlug = null;
+
+async function loadStarters() {
+  try {
+    const r = await fetch(base() + "/api/starters");
+    const data = await r.json();
+    $("starters").innerHTML = "";
+    for (const q of data.starters) {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = q;
+      b.onclick = () => { $("q").value = q; ask(q); };
+      $("starters").append(b);
+    }
+  } catch (e) { $("status").textContent = "Could not reach the API: " + e; }
+}
+
+// Reading a text/event-stream body from fetch and calling onEvent(name, data) per event.
+async function readSSE(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, cut); buffer = buffer.slice(cut + 2);
+      let name = "message", data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event: ")) name = line.slice(7);
+        else if (line.startsWith("data: ")) data += line.slice(6);
+      }
+      onEvent(name, data ? JSON.parse(data) : {});
+    }
+  }
+}
+
+async function ask(question) {
+  $("answer").textContent = ""; $("sources").textContent = ""; $("log").textContent = "";
+  $("up").hidden = $("down").hidden = true;
+  $("status").textContent = "Asking...";
+  const r = await fetch(base() + "/api/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Client-Id": clientId },
+    body: JSON.stringify({ question }),
+  });
+  if (!r.ok) {   // errors before streaming starts come back as JSON
+    const body = await r.json();
+    $("status").textContent = `${r.status} ${body.error.code}: ${body.error.message}`;
+    $("log").textContent = JSON.stringify(body, null, 2);
+    return;
+  }
+  await readSSE(r, (name, data) => {
+    $("log").textContent += `${name}: ${JSON.stringify(data)}\n`;
+    if (name === "meta") $("status").textContent = data.cached ? "From cache" : "Answering...";
+    if (name === "delta") $("answer").textContent += data.text;
+    if (name === "answer") {
+      lastSlug = data.slug;
+      $("answer").textContent = data.answer;
+      $("status").textContent = `${data.status}${data.cached ? " (cached)" : ""} · /q/${data.slug}`;
+      $("sources").textContent = data.sources.length
+        ? "Sources: " + data.sources.map((s) => s.title).join(", ") : "";
+      $("up").hidden = $("down").hidden = false;
+    }
+    if (name === "error") $("status").textContent = `Error ${data.code}: ${data.message}`;
+  });
+}
+
+async function feedback(helpful) {
+  await fetch(base() + "/api/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Client-Id": clientId },
+    body: JSON.stringify({ slug: lastSlug, helpful }),
+  });
+  $("up").hidden = $("down").hidden = true;
+  $("status").textContent += " · thanks";
+}
+
+$("form").onsubmit = (e) => { e.preventDefault(); ask($("q").value); };
+$("up").onclick = () => feedback(true);
+$("down").onclick = () => feedback(false);
+$("base").onchange = loadStarters;
+loadStarters();
+</script>
+</body>
+</html>

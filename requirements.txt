@@ -1,0 +1,7 @@
+# Runtime dependencies for every service (one image, one requirements file).
+anthropic==2.8.0
+fastapi==0.163.1
+uvicorn[standard]==0.54.0
+redis==8.1.0
+httpx2==2.13.1
+pydantic==2.13.5

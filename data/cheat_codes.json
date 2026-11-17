@@ -1,0 +1,17 @@
+{
+  "status": "none_confirmed",
+  "message": "No codes confirmed yet. We add codes only after two independent checks.",
+  "updated_at": "2026-11-15",
+  "platforms": {
+    "ps5": [],
+    "xbox_series": []
+  },
+  "entry_shape": {
+    "name": "Example: Max health and armor",
+    "code": "Button sequence, exactly as entered",
+    "effect": "What it does",
+    "verified": false,
+    "checked_on": "YYYY-MM-DD",
+    "notes": "Optional: disables achievements, etc."
+  }
+}

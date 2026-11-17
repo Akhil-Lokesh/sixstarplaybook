@@ -1,0 +1,87 @@
+# The whole backend on one machine: Redis plus five services.
+# Only the gateway is published; the other four are reachable only inside this network.
+#
+#   cp .env.example .env    # then fill in the values
+#   docker compose up -d --build
+#   curl http://127.0.0.1:8000/api/health
+
+x-service: &service
+  build: .
+  image: sixstarplaybook-backend
+  restart: unless-stopped
+  env_file: .env
+  environment: &service-env
+    APP_ENV: production
+    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    GATEWAY_URL: http://gateway:8000
+    ANSWER_URL: http://answer:8001
+    GUARD_URL: http://guard:8002
+    CONTENT_URL: http://content:8003
+    ANALYTICS_URL: http://analytics:8004
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  gateway:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE: gateway
+      PORT: "8000"
+    ports:
+      - "${GATEWAY_PUBLISH:-127.0.0.1:8000}:8000"
+    depends_on:
+      redis: {condition: service_healthy}
+      answer: {condition: service_started}
+      guard: {condition: service_started}
+      content: {condition: service_started}
+      analytics: {condition: service_started}
+
+  answer:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE: answer
+      PORT: "8001"
+
+  guard:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE: guard
+      PORT: "8002"
+
+  content:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE: content
+      PORT: "8003"
+    # Uncomment to edit the guide and data without rebuilding the image,
+    # then POST /admin/reload on the content service (or restart it).
+    # volumes:
+    #   - ./guide:/app/guide:ro
+    #   - ./data:/app/data:ro
+
+  analytics:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE: analytics
+      PORT: "8004"
+
+volumes:
+  redis-data:
